@@ -20,43 +20,7 @@ Retail businesses lose crores annually from two inventory extremes:
 
 This system forecasts future demand per SKU-Store combination and computes optimal **Safety Stock**, **Reorder Points**, and **Economic Order Quantities** — automating the replenishment decision with ML-driven precision.
 
----
 
-## 🏗️ Project Structure
-
-```
-retail-sales-forecasting-inventory-optimization/
-├── data/
-│   ├── retail_timeseries.csv       ← Raw synthetic data
-│   ├── retail_clean.csv            ← Cleaned & gap-filled
-│   └── retail_features.csv         ← Feature-engineered dataset
-├── notebooks/                      ← Jupyter EDA notebooks
-├── src/
-│   ├── generate_data.py            ← Step 1: Synthetic data generation
-│   ├── preprocess.py               ← Step 2: Cleaning & calendar features
-│   ├── eda.py                      ← Step 3: EDA charts
-│   ├── feature_engineering.py      ← Step 4: Lag & rolling features
-│   ├── train_model.py              ← Step 5: RF + XGBoost training
-│   └── inventory_optimization.py   ← Step 6: SS / ROP / EOQ
-├── models/
-│   ├── rf_model.pkl                ← Saved Random Forest model
-│   └── resid_info.pkl              ← Residual std for safety stock
-├── outputs/
-│   ├── model_comparison.csv        ← MAE / RMSE / R² comparison
-│   └── inventory_recommendations.csv ← PO recommendations per SKU
-├── images/                         ← EDA & model charts
-├── reports/                        ← PDF / HTML reports
-├── docs/                           ← Documentation
-├── app/
-│   ├── app_streamlit.py            ← Interactive planner dashboard
-│   └── api.py                      ← FastAPI replenishment endpoint
-├── main.py                         ← Full pipeline orchestrator
-├── requirements.txt
-├── .gitignore
-└── README.md
-```
-
----
 
 ## ⚙️ Tech Stack
 
@@ -129,18 +93,7 @@ curl -X POST http://127.0.0.1:8000/replenishment \
 | 5 | `src/train_model.py` | Train RF + XGBoost, evaluate, save | `models/*.pkl`, `outputs/model_comparison.csv` |
 | 6 | `src/inventory_optimization.py` | Compute SS, ROP, EOQ per SKU-Store | `outputs/inventory_recommendations.csv` |
 
----
 
-## 📐 Inventory Formulas
-
-| Formula | Variables | Meaning |
-|---------|-----------|---------|
-| `SS = z × σ_L` | z = service-level z-score, σ_L = demand std during lead time | Safety Stock |
-| `ROP = μ_L + SS` | μ_L = mean demand during lead time | Reorder Point |
-| `EOQ = √(2DK / H)` | D = annual demand, K = ordering cost, H = holding cost | Economic Order Quantity |
-| `Q = max(EOQ, ROP − on_hand)` | on_hand = current inventory level | Recommended Order Quantity |
-
----
 
 ## 📈 Model Results
 
@@ -223,27 +176,7 @@ Response:
 
 **`GET /`** — health check
 
----
 
-## 🧑‍💼 Industry Use Cases
-
-- **Grocery & FMCG** — daily replenishment at scale
-- **E-commerce** — seller-side inventory for Flipkart / Amazon
-- **Fashion retail** — seasonal demand forecasting
-- **Pharma** — expiry-aware stock management
-
----
-
-## 🎯 Interview Talking Points
-
-1. **Objective** — Predict demand → maintain optimal stock → reduce stockouts & overstock cost.
-2. **Data** — Simulated 2-year daily sales for 3 stores × 5 SKUs with seasonality, promos, and stockout flags.
-3. **Features** — Lag features (1, 7, 14, 21, 28 days), rolling mean/std (7, 14, 28 windows), calendar features (DOW, month, quarter).
-4. **Models** — Random Forest & XGBoost; benchmarked against seasonal naive (lag-7) baseline.
-5. **Inventory logic** — Service-level-driven Safety Stock & ROP + EOQ for cost-optimal ordering.
-6. **Deployment** — Streamlit dashboard for planners + FastAPI for ERP/WMS system integration.
-
----
 
 ## 📁 Key Output Files
 
@@ -257,10 +190,3 @@ Response:
 
 ---
 
-## 📄 License
-
-This project is licensed under the MIT License — feel free to use it for learning, portfolios, and interviews.
-
----
-
-*Built as a portfolio project for Data Analyst / Data Science roles.*
