@@ -1,122 +1,164 @@
-
-import streamlit as st
-import pandas as pd
+import os
 import numpy as np
-import matplotlib.pyplot as plt
+import pandas as pd
+import streamlit as st
 import joblib
-import io
-from scipy.stats import norm
 
-# ── Page config ──────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="Retail Forecast & Replenishment",
-    page_icon="🛒",
-    layout="wide",
+from src.train_forecast_inventory import (
+    load_and_clean_data,
+    build_feature_matrix,
+    inventory_policy,
+    compute_residual_std,
 )
 
-st.title("🛒 Retail Sales Forecasting & Inventory Optimization")
-st.markdown("---")
 
-# ── Load artefacts ────────────────────────────────────────────────────────────
-@st.cache_resource
-def load_model():
-    artifact   = joblib.load("models/rf_model.pkl")
-    resid_info = joblib.load("models/resid_info.pkl")
-    return artifact["model"], artifact["features"], resid_info["resid_std"]
+# -----------------------------
+# CACHED HELPERS
+# -----------------------------
 
 @st.cache_data
-def load_data():
-    return pd.read_csv("data/retail_features.csv", parse_dates=["date"])
+def load_data_and_features():
+    df = load_and_clean_data("data/retail_timeseries.csv")
+    df_fe, X, y, groups, feature_cols = build_feature_matrix(df)
+    return df, df_fe, X, y, groups, feature_cols
 
-rf, feat_cols, resid_std = load_model()
-df = load_data()
 
-# ── Sidebar controls ──────────────────────────────────────────────────────────
-st.sidebar.header("📦 SKU Selection")
-stores = sorted(df["store_id"].unique())
-items  = sorted(df["item_id"].unique())
+@st.cache_resource
+def load_trained_model():
+    artifact_path = "outputs/model/retail_forecast_model.pkl"
+    if not os.path.exists(artifact_path):
+        raise FileNotFoundError(
+            f"Model artifact not found at {artifact_path}. "
+            "Run `python src/train_forecast_inventory.py` first."
+        )
+    artifact = joblib.load(artifact_path)
+    return artifact["model"], artifact["features"]
 
-store    = st.sidebar.selectbox("Store", stores)
-item     = st.sidebar.selectbox("Product (SKU)", items)
-on_hand  = st.sidebar.number_input("On-Hand Inventory (units)", min_value=0, value=200)
-lead_time = st.sidebar.slider("Lead Time (days)", min_value=1, max_value=30, value=7)
-service_level = st.sidebar.slider("Service Level (%)", min_value=80, max_value=99, value=95)
 
-# ── Filter data for selected SKU-store ───────────────────────────────────────
-grp = df[(df["store_id"] == store) & (df["item_id"] == item)].copy()
-grp = grp.sort_values("date").tail(90)   # use last 90 days
+# -----------------------------
+# STREAMLIT APP
+# -----------------------------
 
-# ── Forecast ──────────────────────────────────────────────────────────────────
-X_grp = grp[feat_cols]
-grp["forecast"] = np.maximum(0, rf.predict(X_grp))
+def main():
+    st.set_page_config(
+        page_title="Retail Sales Forecast & Inventory Optimizer",
+        layout="wide",
+    )
 
-# ── Layout: 2 columns ─────────────────────────────────────────────────────────
-col1, col2 = st.columns([2, 1])
+    st.title("📈 Retail Sales Forecasting & Inventory Optimization")
+    st.write(
+        "Interactively explore **store-item sales**, see model behaviour, "
+        "and get a simple **inventory recommendation**."
+    )
 
-with col1:
-    st.subheader(f"📈 Forecast vs Actual — {store} | {item}")
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(grp["date"], grp["qty_sold"],  label="Actual",   linewidth=1.2)
-    ax.plot(grp["date"], grp["forecast"],  label="Forecast", linewidth=1.2, linestyle="--", color="orange")
-    ax.set_xlabel("Date"); ax.set_ylabel("Units Sold")
-    ax.legend(); plt.tight_layout()
-    st.pyplot(fig)
-    plt.close()
+    # Load data + model
+    with st.spinner("Loading data and model..."):
+        df, df_fe, X, y, groups, feature_cols = load_data_and_features()
+        model, model_features = load_trained_model()
 
-with col2:
-    st.subheader("📊 Inventory Recommendation")
+    # Sidebar controls
+    st.sidebar.header("🔧 Controls")
 
-    z       = norm.ppf(service_level / 100)
-    mu_L    = grp["forecast"].head(lead_time).sum()
-    sigma_L = resid_std * (lead_time ** 0.5)
-    SS      = z * sigma_L
-    ROP     = mu_L + SS
+    stores = sorted(df["store_id"].unique())
+    store_id = st.sidebar.selectbox("Select Store", stores)
 
-    unit_cost    = float(grp["unit_cost"].iloc[0])
-    ordering_cost = float(grp["ordering_cost"].iloc[0])
-    holding_rate = float(grp["holding_rate"].iloc[0])
-    D_annual     = grp["forecast"].mean() * 365
-    H            = unit_cost * holding_rate
-    EOQ          = np.sqrt((2 * D_annual * ordering_cost) / H) if H > 0 else mu_L
-    Q            = max(0.0, max(EOQ, ROP - on_hand))
+    items = sorted(df[df["store_id"] == store_id]["item_id"].unique())
+    item_id = st.sidebar.selectbox("Select Item", items)
 
-    st.metric("Safety Stock (SS)", f"{SS:.0f} units")
-    st.metric("Reorder Point (ROP)", f"{ROP:.0f} units")
-    st.metric("Economic Order Qty (EOQ)", f"{EOQ:.0f} units")
-    st.metric("🚚 Recommended Order Qty", f"{Q:.0f} units",
-              delta=f"₹ {Q*unit_cost:,.0f} value")
+    on_hand = st.sidebar.number_input("On-hand Inventory", min_value=0, value=120, step=10)
+    lead_time_days = st.sidebar.slider("Lead Time (days)", min_value=1, max_value=30, value=7)
+    service_level = st.sidebar.selectbox("Service Level", [0.90, 0.95, 0.99], index=1)
 
-    if on_hand <= ROP:
-        st.error("⚠️ Stock below Reorder Point — place order NOW!")
-    else:
-        st.success("✅ Stock level is adequate.")
+    st.sidebar.markdown("---")
+    run_button = st.sidebar.button("Run Analysis")
 
-# ── Export PO ─────────────────────────────────────────────────────────────────
-st.markdown("---")
-st.subheader("📄 Export Purchase Order")
+    # Filter for selected SKU
+    sku_mask = (df_fe["store_id"] == store_id) & (df_fe["item_id"] == item_id)
+    sku_df = df_fe[sku_mask].sort_values("date")
 
-po_data = {
-    "store_id": store, "item_id": item,
-    "on_hand": on_hand, "lead_time_days": lead_time,
-    "service_level_pct": service_level,
-    "safety_stock": round(SS, 1), "reorder_point": round(ROP, 1),
-    "EOQ": round(EOQ, 1), "order_qty": round(Q, 1),
-    "unit_cost_INR": unit_cost, "order_value_INR": round(Q * unit_cost, 2),
-}
-po_df = pd.DataFrame([po_data])
-csv_buf = io.StringIO()
-po_df.to_csv(csv_buf, index=False)
+    if sku_df.empty:
+        st.warning("No data for this Store–Item combination.")
+        return
 
-st.dataframe(po_df)
-st.download_button(
-    label="⬇️ Download PO as CSV",
-    data=csv_buf.getvalue(),
-    file_name=f"PO_{store}_{item}.csv",
-    mime="text/csv",
-)
+    # Layout columns
+    col_left, col_right = st.columns([2, 1])
 
-# ── Historical stats ──────────────────────────────────────────────────────────
-st.markdown("---")
-st.subheader("🗃️ Historical Sales Summary (last 90 days)")
-stats = grp["qty_sold"].describe().rename("Value").to_frame()
-st.dataframe(stats.T)
+    with col_left:
+        st.subheader(f"📊 Historical Sales – {store_id} / {item_id}")
+
+        hist = sku_df[["date", "qty_sold"]].tail(90)
+        hist = hist.set_index("date")
+        st.line_chart(hist, height=300)
+
+    with col_right:
+        st.subheader("ℹ️ SKU Snapshot")
+        st.metric("Days of history", value=len(sku_df))
+        st.metric("Avg daily sales (last 30d)", value=f"{sku_df['qty_sold'].tail(30).mean():.1f}")
+        st.metric("Max daily sales", value=int(sku_df["qty_sold"].max()))
+
+    st.markdown("---")
+
+    if run_button:
+        st.subheader("🤖 Model Behaviour & Inventory Suggestion")
+
+        # 1) Get model residual std for uncertainty
+        y_pred_all = model.predict(X)
+        resid_std = compute_residual_std(y, y_pred_all)
+
+        # 2) Simple demand forecast for next 30 days:
+        #    use recent 30-day mean as baseline
+        recent_mean = sku_df["qty_sold"].tail(30).mean()
+        forecast_horizon = np.array([recent_mean] * 30)
+
+        # 3) Inventory policy
+        inv = inventory_policy(
+            forecast=forecast_horizon,
+            resid_std=resid_std,
+            on_hand=on_hand,
+            lead_time_days=lead_time_days,
+            service_level=service_level,
+            annual_demand=10000,
+            ordering_cost=500,
+            unit_cost=100,
+            holding_cost_rate=0.2,
+        )
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+            st.write("### 📦 Inventory Metrics")
+            st.write(f"- **Mean demand during lead time (μL)**: `{inv['mu_L']:.2f}` units")
+            st.write(f"- **Safety stock**: `{inv['safety_stock']:.2f}` units")
+            st.write(f"- **Reorder point**: `{inv['reorder_point']:.2f}` units")
+            st.write(f"- **Economic order quantity (EOQ)**: `{inv['eoq']:.2f}` units")
+
+        with c2:
+            st.write("### ✅ Suggested Action")
+            st.success(
+                f"For **{store_id} / {item_id}** with **on-hand = {on_hand}** units "
+                f"and **lead time = {lead_time_days} days** at **{int(service_level*100)}%** service level:\n\n"
+                f"➡️ **Suggested Order Quantity:** **{inv['suggested_order_qty']:.0f} units**"
+            )
+
+        # 4) Small forecast visualization (constant baseline)
+        future_dates = pd.date_range(
+            start=sku_df["date"].max() + pd.Timedelta(days=1),
+            periods=lead_time_days,
+            freq="D",
+        )
+
+        forecast_df = pd.DataFrame(
+            {"date": future_dates, "forecast_qty": forecast_horizon[:lead_time_days]}
+        ).set_index("date")
+
+        st.write("### 🔮 Simple Demand Forecast (Baseline)")
+        st.line_chart(forecast_df, height=250)
+
+        st.caption(
+            "Note: For UI demo, forecast uses recent average demand as baseline. "
+            "In a production system, we would generate future features and use the ML model directly."
+        )
+
+
+if __name__ == "__main__":
+    main()
