@@ -7,7 +7,9 @@ Exposes a POST /replenishment endpoint so downstream systems
 
 Run: uvicorn app.api:app --reload
 Test with curl:
-  curl -X POST http://127.0.0.1:8000/replenishment        -H "Content-Type: application/json"        -d '{"store_id":"S01","item_id":"ITEM_A","on_hand":100,"lead_time":7,"service_level":0.95}'
+  curl -X POST http://127.0.0.1:8000/replenishment \
+       -H "Content-Type: application/json" \
+       -d '{"store_id":"S01","item_id":"ITEM_A","on_hand":100,"lead_time":7,"service_level":0.95}'
 """
 
 from fastapi import FastAPI, HTTPException
